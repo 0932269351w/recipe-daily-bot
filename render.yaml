@@ -1,7 +1,0 @@
-services:
-  - type: cron
-    name: recipe-daily
-    env: docker
-    schedule: "*/35 * * * *"
-    dockerfilePath: ./Dockerfile
-    runCommand: php daily_recipe.php
