@@ -3,9 +3,7 @@
 /**
  * ПАРАМЕТРИ КОНФІГУРАЦІЇ
  */
-$tgToken   = getenv('TG_TOKEN') ?: '8364794225:AAHEDoG8MqMFXGUmOjE8GNNdLj6W9xse9Iw';
-$channelId = getenv('TG_CHANNEL_ID') ?: '@recieptua'; 
-$geminiKey = getenv('GEMINI_KEY') ?: 'AIzaSyAm4vCLL9ebA448Fq7M6Wif9Znz9Gjvk7M';
+
 
 define('TELEGRAM_BOT_TOKEN', $tgToken);
 define('TELEGRAM_CHANNEL_ID', $channelId);
