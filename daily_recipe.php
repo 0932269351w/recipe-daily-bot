@@ -2,8 +2,6 @@
 
 /**
  * ПАРАМЕТРИ КОНФІГУРАЦІЇ
- * Код автоматично підтягне значення з налаштувань Render (Environment Variables),
- * або використає вказані вами значення за замовчуванням.
  */
 $tgToken   = getenv('TG_TOKEN') ?: '8364794225:AAHEDoG8MqMFXGUmOjE8GNNdLj6W9xse9Iw';
 $channelId = getenv('TG_CHANNEL_ID') ?: '@recieptua'; 
@@ -13,41 +11,26 @@ define('TELEGRAM_BOT_TOKEN', $tgToken);
 define('TELEGRAM_CHANNEL_ID', $channelId);
 define('GOOGLE_API_KEY', $geminiKey);
 
-/**
- * Логування результатів роботи
- */
 function writeLog($message) {
     $logEntry = '[' . date('Y-m-d H:i:s') . '] ' . $message . PHP_EOL;
-    echo $logEntry; // Вивід у консоль Render
+    echo $logEntry; 
     file_put_contents(__DIR__ . '/bot_log.txt', $logEntry, FILE_APPEND);
 }
 
 /**
- * Крок 1: Генерація рецепта через Google Gemini API (v1)
+ * Крок 1: Генерація тексту (з підтримкою декількох моделей)
  */
-function generateRecipeText() {
-    // Використовуємо стабільний endpoint v1
-    $url = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=" . GOOGLE_API_KEY;
+function generateRecipeText($modelName = "gemini-1.5-flash-latest") {
+    // Використовуємо v1beta, оскільки вона частіше підтримує нові моделі
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/{$modelName}:generateContent?key=" . GOOGLE_API_KEY;
 
     $prompt = "Згенеруй унікальний кулінарний рецепт українською мовою. 
-    Вимоги до формату:
-    1. Перший рядок — тільки назва страви (без зірочок та лапок).
-    2. Другий рядок — порожній.
-    3. Далі — список інгредієнтів з емодзі та покрокова інструкція.
-    Зроби текст апетитним та використовуй жирний шрифт Markdown для заголовків.";
+    1. Перший рядок — лише назва.
+    2. Потім порожній рядок.
+    3. Далі інгредієнти та інструкція з емодзі. Використовуй Markdown.";
 
     $data = [
-        "contents" => [
-            [
-                "parts" => [
-                    ["text" => $prompt]
-                ]
-            ]
-        ],
-        "generationConfig" => [
-            "temperature" => 0.7,
-            "maxOutputTokens" => 800
-        ]
+        "contents" => [["parts" => [["text" => $prompt]]]]
     ];
 
     $ch = curl_init($url);
@@ -55,39 +38,40 @@ function generateRecipeText() {
     curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false); // Для уникнення проблем з сертифікатами на сервері
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 
     $response = curl_exec($ch);
-    $error = curl_error($ch);
+    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
-    if ($error) {
-        writeLog("CURL Error (Gemini): " . $error);
-        return false;
-    }
-
     $result = json_decode($response, true);
-    
-    if (isset($result['candidates'][0]['content']['parts'][0]['text'])) {
+
+    if ($httpCode === 200 && isset($result['candidates'][0]['content']['parts'][0]['text'])) {
         return $result['candidates'][0]['content']['parts'][0]['text'];
     }
 
-    writeLog("Gemini API Error: " . $response);
+    // Якщо модель не знайдена і ми ще не пробували gemini-pro
+    if ($httpCode === 404 && $modelName !== "gemini-pro") {
+        writeLog("Модель {$modelName} не знайдена. Спробуємо gemini-pro...");
+        return generateRecipeText("gemini-pro");
+    }
+
+    writeLog("Помилка API ($httpCode): " . $response);
     return false;
 }
 
 /**
- * Крок 2: Відправка повідомлення в Telegram
+ * Крок 2: Відправка в Telegram
  */
 function sendToTelegram($title, $fullText) {
-    // Створюємо URL для картинки-заглушки на основі назви рецепта
-    $cleanTitle = urlencode(mb_substr($title, 0, 40));
-    $photoUrl = "https://dummyimage.com/800x600/d4a84c/fff.jpg&text=" . $cleanTitle;
+    $cleanTitle = urlencode(mb_substr($title, 0, 45));
+    // Використовуємо більш надійний сервіс для картинок
+    $photoUrl = "https://placehold.jp/24/d4a84c/ffffff/800x600.png?text=" . $cleanTitle;
     
     $url = "https://api.telegram.org/bot" . TELEGRAM_BOT_TOKEN . "/sendPhoto";
     
-    // Telegram обмежує довжину підпису до фото (caption) у 1024 символи
-    $caption = mb_substr($fullText, 0, 1020);
+    // Обмеження Telegram для підпису до фото
+    $caption = mb_substr($fullText, 0, 1000);
 
     $postData = [
         'chat_id' => TELEGRAM_CHANNEL_ID,
@@ -103,39 +87,26 @@ function sendToTelegram($title, $fullText) {
     curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
     
     $response = curl_exec($ch);
-    $error = curl_error($ch);
     curl_close($ch);
-    
-    if ($error) {
-        writeLog("CURL Error (Telegram): " . $error);
-        return false;
-    }
-
     return $response;
 }
 
-// --- ОСНОВНИЙ ЦИКЛ ЗАПУСКУ ---
-
-writeLog("Запуск генерації рецепта...");
-
+// Запуск
+writeLog("--- Початок роботи ---");
 $recipe = generateRecipeText();
 
 if ($recipe) {
-    // Розділяємо текст на назву та основний контент
     $lines = explode("\n", trim($recipe));
     $title = trim($lines[0]);
     
-    // Відправляємо в канал
     $result = sendToTelegram($title, $recipe);
-    
     $resArray = json_decode($result, true);
+
     if (isset($resArray['ok']) && $resArray['ok'] === true) {
-        writeLog("Успішно опубліковано: " . $title);
+        writeLog("Успіх! Опубліковано: " . $title);
     } else {
-        writeLog("Помилка відправки в TG: " . $result);
+        writeLog("Помилка Telegram: " . $result);
     }
 } else {
-    writeLog("Не вдалося отримати рецепт від API.");
+    writeLog("Критична помилка: рецепт не згенеровано.");
 }
-
-?>
