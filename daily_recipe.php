@@ -1,145 +1,100 @@
 <?php
 
 // --- НАЛАШТУВАННЯ ---
-// Замініть на ваші реальні ключі
-define('TELEGRAM_BOT_TOKEN', '8364794225:AAHEDoG8MqMFXGUmOjE8GNNdLj6W9xse9Iw');
-define('TELEGRAM_CHANNEL_ID', $_ENV['CHANNEL_ID']); // Наприклад: -100123456789
-define('GOOGLE_API_KEY', $_ENV['GEMINI_KEY']);
+// Ви можете вписати ключі тут АБО додати їх у Dashboard Render -> Environment
+$tgToken   = getenv('TG_TOKEN') ?: '8364794225:AAHEDoG8MqMFXGUmOjE8GNNdLj6W9xse9Iw';
+$channelId = getenv('TG_CHANNEL_ID') ?: '@recieptua'; 
+$geminiKey = getenv('GEMINI_KEY') ?: 'AIzaSyAm4vCLL9ebA448Fq7M6Wif9Znz9Gjvk7M';
+
+define('TELEGRAM_BOT_TOKEN', $tgToken);
+define('TELEGRAM_CHANNEL_ID', $channelId);
+define('GOOGLE_API_KEY', $geminiKey);
 // ---------------------
 
-
-/**
- * Функція для логування помилок (опціонально)
- */
 function writeLog($message) {
+    echo $message . PHP_EOL; // Вивід у консоль Render
     file_put_contents(__DIR__ . '/bot_log.txt', '[' . date('Y-m-d H:i:s') . '] ' . $message . PHP_EOL, FILE_APPEND);
 }
 
 /**
- * Крок 1: Генерація тексту рецепта через Google Gemini Pro
+ * Крок 1: Генерація рецепта через Gemini 1.5 Flash
  */
 function generateRecipeText() {
-    $endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" . GOOGLE_API_KEY;
+    // Оновлений URL для моделі 1.5 Flash
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" . GOOGLE_API_KEY;
 
-    // Промпт (запит) до нейромережі.
-    // Просимо повернути назву у першому рядку для подальшої обробки.
-    $promptText = "Згенеруй унікальний та цікавий кулінарний рецепт українською мовою.
-    Вимоги до формату:
-    1. Перший рядок має містити ТІЛЬКИ назву страви (коротко, без лапок і зайвих слів).
-    2. Другий рядок - порожній.
-    3. Далі йде сам рецепт: короткий вступ, інгредієнти (списком з емодзі), покрокове приготування (нумерованим списком).
-    4. Використовуй жирний шрифт та емодзі для красивого оформлення в Telegram. Зроби рецепт апетитним.";
+    $prompt = "Згенеруй цікавий рецепт українською. Перший рядок - лише назва. Далі порожній рядок, потім інгредієнти та приготування з емодзі. Використовуй Markdown.";
 
     $data = [
         "contents" => [
-            [
-                "parts" => [
-                    ["text" => $promptText]
-                ]
-            ]
+            ["parts" => [["text" => $prompt]]]
         ]
     ];
 
-    $ch = curl_init($endpointUrl);
+    $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
     curl_setopt($ch, CURLOPT_POST, true);
     curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    // Додаємо ігнорування сертифікатів, якщо на сервері старі налаштування
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
 
     $response = curl_exec($ch);
-
-    if (curl_errno($ch)) {
-        writeLog('Gemini Curl Error: ' . curl_error($ch));
-        curl_close($ch);
-        return false;
-    }
+    $error = curl_error($ch);
     curl_close($ch);
 
-    $decodedResponse = json_decode($response, true);
-
-    if (!isset($decodedResponse['candidates'][0]['content']['parts'][0]['text'])) {
-        writeLog('Gemini API response error: ' . $response);
+    if ($error) {
+        writeLog("CURL Error: " . $error);
         return false;
     }
 
-    return $decodedResponse['candidates'][0]['content']['parts'][0]['text'];
+    $result = json_decode($response, true);
+    
+    if (isset($result['candidates'][0]['content']['parts'][0]['text'])) {
+        return $result['candidates'][0]['content']['parts'][0]['text'];
+    }
+
+    writeLog("API Error Response: " . $response);
+    return false;
 }
 
-
 /**
- * Крок 2: Отримання URL зображення.
- * ВАЖЛИВО: Google наразі не надає простого публічного API для генерації зображень
- * за звичайним API ключем (потрібен Vertex AI).
- * Тому ми використовуємо сервіс-заглушку, який створює картинку з назвою рецепта.
+ * Крок 2: Відправка в Telegram
  */
-function getImageUrl($recipeTitle) {
-    // Очищаємо назву для використання в URL
-    $cleanTitle = urlencode(trim(preg_replace('/[^A-Za-z0-9\s\p{L}\-]/u', '', mb_substr($recipeTitle, 0, 50))));
-
-    // --- ТУТ БУДЕ ВАША ІНТЕГРАЦІЯ З AI ГЕНЕРАЦІЄЮ ЗОБРАЖЕНЬ ---
-    // Якщо Google випустить простий API для картинок, ви заміните цей блок на виклик їх API.
-    // Наразі використовуємо заглушку, щоб код працював:
-    $imageUrl = "https://dummyimage.com/800x600/d4a84c/fff.jpg&text=" . $cleanTitle;
-
-    return $imageUrl;
-}
-
-
-/**
- * Крок 3: Відправка фото з підписом у Telegram канал
- */
-function sendTelegramPhoto($chatId, $photoUrl, $caption) {
+function sendToTelegram($title, $text) {
+    $cleanTitle = urlencode(mb_substr($title, 0, 50));
+    $photoUrl = "https://dummyimage.com/800x600/d4a84c/fff.jpg&text=" . $cleanTitle;
+    
     $url = "https://api.telegram.org/bot" . TELEGRAM_BOT_TOKEN . "/sendPhoto";
-
+    
     $postData = [
-        'chat_id' => $chatId,
+        'chat_id' => TELEGRAM_CHANNEL_ID,
         'photo' => $photoUrl,
-        'caption' => $caption,
-        'parse_mode' => 'Markdown' // Важливо для форматування жирним шрифтом
+        'caption' => $text,
+        'parse_mode' => 'Markdown'
     ];
 
-    $ch = curl_init();
-    curl_setopt($ch, CURLOPT_URL, $url);
-    curl_setopt($ch, CURLOPT_POST, count($postData));
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+    $ch = curl_init($url);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-
-    $result = curl_exec($ch);
-
-    if (curl_errno($ch)) {
-        writeLog('Telegram Curl Error: ' . curl_error($ch));
-    }
-    
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    $res = curl_exec($ch);
     curl_close($ch);
-    return $result;
-}
-
-
-// --- ГОЛОВНА ЛОГІКА ЗАПУСКУ ---
-
-// 1. Отримуємо повний текст рецепта від Gemini
-$fullRecipeText = generateRecipeText();
-
-if ($fullRecipeText) {
-    // 2. Розбиваємо текст на рядки, щоб витягнути назву (перший рядок)
-    $textLines = explode("\n", trim($fullRecipeText));
-    $recipeTitle = isset($textLines[0]) ? trim($textLines[0]) : "Смачний рецепт";
     
-    // Видаляємо перший рядок з заголовком з основного тексту, щоб не дублювати
-    unset($textLines[0]);
-    $recipeCaption = trim(implode("\n", $textLines));
-
-    // 3. Генеруємо URL картинки (на основі назви)
-    $imageUrl = getImageUrl($recipeTitle);
-
-    // 4. Відправляємо у канал
-    $response = sendTelegramPhoto(TELEGRAM_CHANNEL_ID, $imageUrl, $recipeCaption);
-
-    echo "Спроба публікації виконана. Відповідь Telegram: " . $response;
-
-} else {
-    echo "Помилка генерації рецепта. Перевірте логи.";
-    writeLog("Спроба запуску невдала: не вдалося отримати текст від Gemini.");
+    return $res;
 }
 
-?>
+// Запуск
+$recipe = generateRecipeText();
+
+if ($recipe) {
+    $lines = explode("\n", trim($recipe));
+    $title = $lines[0];
+    unset($lines[0]);
+    $content = trim(implode("\n", $lines));
+
+    $res = sendToTelegram($title, $content);
+    echo "Готово! Відповідь TG: " . $res;
+} else {
+    echo "Помилка: не вдалося згенерувати рецепт. Перевірте логи або API ключ.";
+}
