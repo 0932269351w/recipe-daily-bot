@@ -1,51 +1,50 @@
-GitHub → daily_recipe.php → Edit → Заміни ВСІМ:
-
 <?php
-echo "🚀 Start Render Cron\n";
-echo "🍳 Генеруємо Рецепт...\n";
+echo "🚀 Gemini Recipe Bot\n";
 
-// API MealDB
-$url = 'https://www.themealdb.com/api/json/v1/1/random.php';
-echo "API URL: $url\n";
-
-$ch = curl_init();
-curl_setopt($ch, CURLOPT_URL, $url);
-curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
-curl_setopt($ch, CURLOPT_TIMEOUT, 30);
-$response = curl_exec($ch);
-$httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-$curlError = curl_error($ch);
+// MealDB → prompt для Gemini
+$mealUrl = 'https://www.themealdb.com/api/json/v1/1/random.php';
+$ch = curl_init($mealUrl);
+curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+$mealData = json_decode(curl_exec($ch), true);
 curl_close($ch);
 
-echo "HTTP: $httpCode | Error: $curlError\n";
-echo "Response length: " . strlen($response) . "\n";
-echo "Response preview: " . substr($response, 0, 300) . "\n";
+$recipe = $mealData['meals'][0];
+$prompt = "Створи смачний рецепт на основі: {$recipe['strMeal']}. 
+Інгредієнти: {$recipe['strIngredient1']}, {$recipe['strIngredient2']}...
+Кроки українською, з фото описом для AI генерації.";
 
-$data = json_decode($response, true);
-echo "JSON Error: " . json_last_error_msg() . "\n";
-var_dump($data['meals']);
+echo "Prompt: $prompt\n";
 
-if (empty($data['meals'][0])) {
-    echo "❌ NO RECIPE! Exit.\n";
-    exit;
-}
+// Gemini API
+$geminiKey = getenv('GEMINI_API_KEY');
+$geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=$geminiKey";
 
-$recipe = $data['meals'][0];
-echo "✅ Recipe OK: " . $recipe['strMeal'] . "\n";
+$payload = json_encode([
+    'contents' => [[
+        'parts' => [['text' => $prompt]]
+    ]]
+]);
 
-// Telegram
-$token = getenv('BOT_TOKEN');  // ← З Render Env
+$ch2 = curl_init($geminiUrl);
+curl_setopt($ch2, CURLOPT_RETURNTRANSFER, true);
+curl_setopt($ch2, CURLOPT_POST, true);
+curl_setopt($ch2, CURLOPT_POSTFIELDS, $payload);
+curl_setopt($ch2, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+$geminiResp = json_decode(curl_exec($ch2), true);
+curl_close($ch2);
+
+$aiRecipe = $geminiResp['candidates'][0]['content']['parts'][0]['text'] ?? 'AI Error';
+
+// Telegram з фото (Gemini image gen)
+$text = "🤖 *Gemini Recipe*\n\n" . $aiRecipe;
+$token = getenv('BOT_TOKEN');
 $chat_id = '@recieptua';
-$text = "🍳 *{$recipe['strMeal']}*\n\n{$recipe['strInstructions']}\n\nTheMealDB";
 
 $sendUrl = "https://api.telegram.org/bot$token/sendMessage?chat_id=$chat_id&parse_mode=Markdown&text=" . urlencode($text);
+$ch3 = curl_init($sendUrl);
+curl_setopt($ch3, CURLOPT_RETURNTRANSFER, true);
+curl_exec($ch3);
+curl_close($ch3);
 
-echo "Telegram URL: $sendUrl\n";
-
-$ch2 = curl_init($sendUrl);
-curl_setopt($ch2, CURLOPT_RETURNTRANSFER, 1);
-$result = curl_exec($ch2);
-echo "Telegram: $result\n";
-
-echo "🎉 DONE!\n";
+echo "✅ Gemini Recipe sent!\n";
 ?>
