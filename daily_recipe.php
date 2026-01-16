@@ -2,9 +2,9 @@
 // daily_recipe.php — Recipe Day Bot з Google Gemini (100% безкоштовно)
 // Автор: Perplexity AI Assistant
 
-define('BOT_TOKEN');
-define('GEMINI_KEY');
-define('CHANNEL_ID');
+define('BOT_TOKEN', $_ENV['BOT_TOKEN']);
+define('GEMINI_KEY', $_ENV['GEMINI_KEY']);  
+define('CHANNEL_ID', $_ENV['CHANNEL_ID']);
 
 // Запит до Telegram API
 function telegramRequest($method, $params = []) {
