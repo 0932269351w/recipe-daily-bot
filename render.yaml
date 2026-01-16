@@ -1,7 +1,7 @@
-cronJobs:
+services:
   - type: cron
-    name: recipe-bot
+    name: recipe-daily
     env: docker
     schedule: "*/35 * * * *"
-    dockerfilePath: ./Dockerfile  # але ми його НЕ створюємо!
+    dockerfilePath: ./Dockerfile
     runCommand: php daily_recipe.php
