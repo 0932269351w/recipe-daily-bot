@@ -1,0 +1,6 @@
+```yaml
+services:
+  - type: cron
+    name: recipe-daily
+    env: docker
+    repo: https://github
