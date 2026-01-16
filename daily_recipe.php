@@ -16,7 +16,7 @@ $prompt = "Створи смачний рецепт на основі: {$recipe[
 echo "Prompt: $prompt\n";
 
 // Gemini API
-$geminiKey = getenv('GEMINI_API_KEY');
+$geminiKey = getenv('AIzaSyAm4vCLL9ebA448Fq7M6Wif9Znz9Gjvk7M');
 $geminiUrl = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=$geminiKey";
 
 $payload = json_encode([
