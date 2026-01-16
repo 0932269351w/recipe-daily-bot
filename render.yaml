@@ -1,6 +1,7 @@
-```yaml
-services:
+cronJobs:
   - type: cron
-    name: recipe-daily
+    name: recipe-bot
     env: docker
-    repo: https://github
+    schedule: "*/35 * * * *"
+    dockerfilePath: ./Dockerfile  # але ми його НЕ створюємо!
+    runCommand: php daily_recipe.php
