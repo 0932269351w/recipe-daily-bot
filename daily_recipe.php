@@ -1,110 +1,82 @@
 <?php
 
+// 1. Отримання конфіденційних даних із середовища Render
+$gemini_api_key = getenv('GEMINI_KEY');
+$telegram_token = getenv('BOT_TOKEN');
+$chat_id        = getenv('CHANNEL_ID');
+
 /**
- * ПАРАМЕТРИ КОНФІГУРАЦІЇ
+ * ЗАХИСТ: Секретний токен для запуску.
+ * Додайте змінну SECRET_TOKEN у Render (наприклад: my_super_secret_123)
+ * Тоді запуск буде можливий лише за посиланням:
+ * your-app.onrender.com/?token=my_super_secret_123
  */
-
-
-define('TELEGRAM_BOT_TOKEN', $tgToken);
-define('TELEGRAM_CHANNEL_ID', $channelId);
-define('GOOGLE_API_KEY', $geminiKey);
-
-function writeLog($message) {
-    $logEntry = '[' . date('Y-m-d H:i:s') . '] ' . $message . PHP_EOL;
-    echo $logEntry; 
-    file_put_contents(__DIR__ . '/bot_log.txt', $logEntry, FILE_APPEND);
+$secret_token = getenv('SECRET_TOKEN') ?: 'default_token';
+if (($_GET['token'] ?? '') !== $secret_token) {
+    http_response_code(403);
+    die("Доступ заборонено.");
 }
 
+// 2. Визначення типу страви (через URL або за часом)
+$meal_type = $_GET['type'] ?? 'lunch';
+
 /**
- * Крок 1: Генерація тексту (з підтримкою декількох моделей)
+ * Функція генерації контенту через Gemini 1.5 Pro
  */
-function generateRecipeText($modelName = "gemini-1.5-flash-latest") {
-    // Використовуємо v1beta, оскільки вона частіше підтримує нові моделі
-    $url = "https://generativelanguage.googleapis.com/v1beta/models/{$modelName}:generateContent?key=" . GOOGLE_API_KEY;
-
-    $prompt = "Згенеруй унікальний кулінарний рецепт українською мовою. 
-    1. Перший рядок — лише назва.
-    2. Потім порожній рядок.
-    3. Далі інгредієнти та інструкція з емодзі. Використовуй Markdown.";
-
-    $data = [
-        "contents" => [["parts" => [["text" => $prompt]]]]
+function generateRecipe($type, $apiKey) {
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=" . $apiKey;
+    
+    $prompts = [
+        'breakfast' => "рецепт швидкого сніданку",
+        'lunch'     => "рецепт ситного обіду",
+        'dinner'    => "рецепт легкої вечері"
     ];
 
-    $ch = curl_init($url);
-    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    $prompt_text = "Напиши унікальний " . $prompts[$type] . " українською. 
+                    Структура: Назва, Інгредієнти, Приготування. 
+                    В кінці: 'ImagePrompt: [English description for AI image generator]'";
 
+    $data = ["contents" => [["parts" => [["text" => $prompt_text]]]]];
+
+    $ch = curl_init($url);
+    curl_setopt($ch, CURLOPT_HTTPHEADER, ['Content-Type: application/json']);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, json_encode($data));
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
     $response = curl_exec($ch);
-    $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
     $result = json_decode($response, true);
-
-    if ($httpCode === 200 && isset($result['candidates'][0]['content']['parts'][0]['text'])) {
-        return $result['candidates'][0]['content']['parts'][0]['text'];
-    }
-
-    // Якщо модель не знайдена і ми ще не пробували gemini-pro
-    if ($httpCode === 404 && $modelName !== "gemini-pro") {
-        writeLog("Модель {$modelName} не знайдена. Спробуємо gemini-pro...");
-        return generateRecipeText("gemini-pro");
-    }
-
-    writeLog("Помилка API ($httpCode): " . $response);
-    return false;
+    return $result['candidates'][0]['content']['parts'][0]['text'] ?? null;
 }
 
-/**
- * Крок 2: Відправка в Telegram
- */
-function sendToTelegram($title, $fullText) {
-    $cleanTitle = urlencode(mb_substr($title, 0, 45));
-    // Використовуємо більш надійний сервіс для картинок
-    $photoUrl = "https://placehold.jp/24/d4a84c/ffffff/800x600.png?text=" . $cleanTitle;
-    
-    $url = "https://api.telegram.org/bot" . TELEGRAM_BOT_TOKEN . "/sendPhoto";
-    
-    // Обмеження Telegram для підпису до фото
-    $caption = mb_substr($fullText, 0, 1000);
+// Виконання логіки
+$content = generateRecipe($meal_type, $gemini_api_key);
 
-    $postData = [
-        'chat_id' => TELEGRAM_CHANNEL_ID,
-        'photo' => $photoUrl,
-        'caption' => $caption,
+if ($content) {
+    // Обробка промпту для фото
+    preg_match('/ImagePrompt: (.*)$/m', $content, $matches);
+    $img_prompt = isset($matches[1]) ? trim($matches[1]) : "delicious " . $meal_type;
+    $final_text = preg_replace('/ImagePrompt: .*$/m', '', $content);
+
+    // Генерація фото (використовуємо seed для унікальності)
+    $image_url = "https://image.pollinations.ai/prompt/" . urlencode($img_prompt) . "?width=1024&height=1024&nologo=true&seed=" . rand(1, 9999);
+
+    // Відправка в Telegram
+    $tg_url = "https://api.telegram.org/bot$telegram_token/sendPhoto";
+    $post_fields = [
+        'chat_id'    => $chat_id,
+        'photo'      => $image_url,
+        'caption'    => $final_text,
         'parse_mode' => 'Markdown'
     ];
 
-    $ch = curl_init($url);
+    $ch = curl_init($tg_url);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, $post_fields);
     curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
-    curl_setopt($ch, CURLOPT_POST, true);
-    curl_setopt($ch, CURLOPT_POSTFIELDS, $postData);
-    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-    
-    $response = curl_exec($ch);
+    $res = curl_exec($ch);
     curl_close($ch);
-    return $response;
-}
 
-// Запуск
-writeLog("--- Початок роботи ---");
-$recipe = generateRecipeText();
-
-if ($recipe) {
-    $lines = explode("\n", trim($recipe));
-    $title = trim($lines[0]);
-    
-    $result = sendToTelegram($title, $recipe);
-    $resArray = json_decode($result, true);
-
-    if (isset($resArray['ok']) && $resArray['ok'] === true) {
-        writeLog("Успіх! Опубліковано: " . $title);
-    } else {
-        writeLog("Помилка Telegram: " . $result);
-    }
+    echo "Пост [$meal_type] успішно надіслано!";
 } else {
-    writeLog("Критична помилка: рецепт не згенеровано.");
+    echo "Помилка генерації.";
 }
