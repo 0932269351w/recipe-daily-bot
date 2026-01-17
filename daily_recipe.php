@@ -16,14 +16,12 @@ echo "--- Початок тесту ---\n";
  * Функція генерації контенту через Gemini 1.5 Pro
  */
 function generateTestRecipe($apiKey) {
-    // Використовуємо модель Gemini 1.5 Pro
-    $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent?key=" . $apiKey;
+    // Міняємо назву моделі на gemini-1.5-flash (вона стабільніша для Free Tier)
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" . $apiKey;
     
-    // Промпт для генерації випадкової страви
     $prompt = "Напиши рецепт будь-якої дуже апетитної страви українською мовою. 
-               Зроби текст цікавим, з коротким вступом.
                Структура: Назва, Інгредієнти, Крок за кроком. 
-               В кінці окремим рядком обов'язково напиши: 'ImagePrompt: [photorealistic, appetizing food photography of this dish, high resolution]'";
+               В кінці окремим рядком напиши: 'ImagePrompt: [photorealistic, appetizing food photography of this dish, high resolution]'";
 
     $data = [
         "contents" => [["parts" => [["text" => $prompt]]]]
@@ -38,8 +36,9 @@ function generateTestRecipe($apiKey) {
     $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
     curl_close($ch);
 
+    // Допомагає відстежити, що саме прийшло від Google
     if ($httpCode !== 200) {
-        echo "Помилка API Gemini: HTTP $httpCode. Перевірте ваш API ключ.\n";
+        echo "Помилка API Gemini: HTTP $httpCode. Відповідь сервера: $response\n";
         return null;
     }
 
