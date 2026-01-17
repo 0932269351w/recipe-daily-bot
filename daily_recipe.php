@@ -1,22 +1,20 @@
 <?php
 
 /**
- * Бот для рецептів (Версія 2.5 Preview)
- * Базується на моделях, знайдених під час діагностики
+ * Бот для рецептів (Версія 1.5 Flash - найвищі ліміти)
  */
 
 $gemini_api_key = getenv('GEMINI_KEY');
 $telegram_token = getenv('BOT_TOKEN');
 $chat_id        = getenv('CHANNEL_ID');
 
-echo "--- Запуск з моделлю Gemini 2.5 ---\n";
+echo "--- Спроба запуску з Gemini 1.5 Flash ---\n";
 
 function generateRecipe($apiKey) {
-    // Використовуємо точну назву моделі з вашого списку
-    $model = "gemini-2.5-computer-use-preview-10-2025";
-    $url = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=" . $apiKey;
+    // Використовуємо найбільш стабільне посилання для безкоштовного рівня
+    $url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" . $apiKey;
     
-    $prompt = "Напиши апетитний рецепт страви українською мовою. 
+    $prompt = "Напиши рецепт апетитної страви українською мовою. 
                Структура: Назва, Інгредієнти, Приготування. 
                В кінці напиши: 'ImagePrompt: [photorealistic food photography]'";
 
@@ -34,7 +32,7 @@ function generateRecipe($apiKey) {
 
     if ($httpCode !== 200) {
         echo "Помилка API (Код $httpCode).\n";
-        echo "Відповідь: $response\n";
+        echo "Відповідь сервера: $response\n";
         return null;
     }
 
@@ -42,16 +40,17 @@ function generateRecipe($apiKey) {
     return $result['candidates'][0]['content']['parts'][0]['text'] ?? null;
 }
 
+// Запуск
 $content = generateRecipe($gemini_api_key);
 
 if ($content) {
-    echo "AI згенерував контент. Відправка в Telegram...\n";
+    echo "AI успішно згенерував рецепт.\n";
 
     preg_match('/ImagePrompt: (.*)$/m', $content, $matches);
     $img_prompt = isset($matches[1]) ? trim($matches[1]) : "delicious food";
     $final_text = preg_replace('/ImagePrompt: .*$/m', '', $content);
     
-    $image_url = "https://image.pollinations.ai/prompt/" . urlencode($img_prompt) . "?width=1024&height=1024&nologo=true&seed=" . rand(1, 99999);
+    $image_url = "https://image.pollinations.ai/prompt/" . urlencode($img_prompt) . "?width=1024&height=1024&seed=" . rand(1, 99999);
 
     $tg_url = "https://api.telegram.org/bot$telegram_token/sendPhoto";
     $post_fields = [
@@ -69,8 +68,8 @@ if ($content) {
 
     $res_data = json_decode($tg_res, true);
     if (isset($res_data['ok']) && $res_data['ok']) {
-        echo "Успіх! Рецепт надіслано в канал.\n";
+        echo "Успіх! Перевірте канал.\n";
     } else {
-        echo "Помилка Telegram: " . ($res_data['description'] ?? 'невідома помилка') . "\n";
+        echo "Помилка Telegram: " . ($res_data['description'] ?? 'error') . "\n";
     }
 }
